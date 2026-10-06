@@ -1,1 +1,354 @@
-PLACEHOLDER
+{
+  "name": "AI Lead Processing - Website Form to Sheets + Gmail",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "website-lead",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Website Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "website-lead-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "name",
+              "value": "={{ $json.body.name || $json.name || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "email",
+              "value": "={{ $json.body.email || $json.email || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "phone",
+              "value": "={{ $json.body.phone || $json.phone || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "message",
+              "value": "={{ $json.body.message || $json.message || $json.body.inquiry || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "raw_budget",
+              "value": "={{ $json.body.budget || $json.budget || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "received_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-clean-data",
+      "name": "Clean & Structure Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "sheetId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "options": {
+          "range": "Leads!A:A"
+        }
+      },
+      "id": "sheets-check-dupe",
+      "name": "Check Existing Emails",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [720, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simple duplicate check by email\nconst incomingEmail = ($input.first().json.email || '').toLowerCase().trim();\nconst existingRows = $input.all();\n\nlet isDuplicate = false;\nfor (const row of existingRows) {\n  const existingEmail = (row.json.Email || row.json.email || '').toLowerCase().trim();\n  if (existingEmail && existingEmail === incomingEmail) {\n    isDuplicate = true;\n    break;\n  }\n}\n\nreturn [{\n  json: {\n    ...$('Clean & Structure Data').first().json,\n    is_duplicate: isDuplicate\n  }\n}];"
+      },
+      "id": "code-dupe-check",
+      "name": "Duplicate Check Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_duplicate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-duplicate",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a lead classification assistant for a digital marketing agency. Analyze the inquiry and return ONLY valid JSON with these exact keys:\n\n{\n  \"service_requested\": \"short name of the service they want (e.g. SEO, Google Ads, Social Media, Website Design, Content Marketing, Other)\",\n  \"approximate_budget\": \"any budget mentioned or 'Not specified'\",\n  \"lead_priority\": \"HOT or WARM or COLD\",\n  \"summary\": \"2-3 sentence plain English summary of what the person is asking for\"\n}\n\nPriority rules:\n- HOT: urgent language, high budget ($5k+), ready to start soon, specific project\n- WARM: clear interest, some budget mentioned, reasonable timeline\n- COLD: vague, no budget, just browsing, low intent\n\nReturn only the JSON object, no markdown, no extra text."
+            },
+            {
+              "role": "user",
+              "content": "Name: {{ $json.name }}\nEmail: {{ $json.email }}\nPhone: {{ $json.phone }}\nMessage: {{ $json.message }}\nBudget field: {{ $json.raw_budget }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 400
+        }
+      },
+      "id": "openai-classify",
+      "name": "OpenAI - Classify & Extract",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [1440, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI JSON response safely\nconst aiRaw = $input.first().json.message?.content || $input.first().json.text || $input.first().json.output || '';\nlet parsed = {\n  service_requested: 'Other',\n  approximate_budget: 'Not specified',\n  lead_priority: 'WARM',\n  summary: 'Could not generate summary'\n};\n\ntry {\n  // Clean possible markdown code blocks\n  let clean = aiRaw.replace(/```json/gi, '').replace(/```/g, '').trim();\n  parsed = JSON.parse(clean);\n} catch (e) {\n  // fallback - try to extract fields with simple regex if pure JSON fails\n  console.log('AI parse error, using fallback');\n}\n\nconst original = $('Duplicate Check Logic').first().json;\n\nreturn [{\n  json: {\n    name: original.name || '',\n    email: original.email || '',\n    phone: original.phone || '',\n    message: original.message || '',\n    service_requested: parsed.service_requested || 'Other',\n    approximate_budget: parsed.approximate_budget || 'Not specified',\n    lead_priority: (parsed.lead_priority || 'WARM').toUpperCase(),\n    summary: parsed.summary || '',\n    received_at: original.received_at,\n    is_duplicate: false\n  }\n}];"
+      },
+      "id": "code-parse-ai",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 200]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "sheetId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "options": {},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.name }}",
+            "Email": "={{ $json.email }}",
+            "Phone": "={{ $json.phone }}",
+            "Service Requested": "={{ $json.service_requested }}",
+            "Approximate Budget": "={{ $json.approximate_budget }}",
+            "Lead Priority": "={{ $json.lead_priority }}",
+            "AI Summary": "={{ $json.summary }}",
+            "Original Message": "={{ $json.message }}",
+            "Received At": "={{ $json.received_at }}",
+            "Status": "New"
+          }
+        }
+      },
+      "id": "sheets-append",
+      "name": "Save Lead to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1920, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "OWNER_EMAIL_HERE@youragency.com",
+        "subject": "={{ 'New ' + $json.lead_priority + ' Lead – Website Inquiry' }}",
+        "emailType": "text",
+        "message": "=New lead received from website form\n\nPriority: {{ $json.lead_priority }}\nName: {{ $json.name }}\nEmail: {{ $json.email }}\nPhone: {{ $json.phone }}\nService Requested: {{ $json.service_requested }}\nApprox. Budget: {{ $json.approximate_budget }}\n\nAI Summary:\n{{ $json.summary }}\n\nOriginal Message:\n{{ $json.message }}\n\nReceived: {{ $json.received_at }}\n\n---\nThis email was generated automatically by your n8n lead workflow.",
+        "options": {}
+      },
+      "id": "gmail-notify",
+      "name": "Gmail Notification to Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2160, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Duplicate Lead Detected\n\nThis submission was flagged as a possible duplicate (matching email already exists in the sheet).\n\nNo new row was added and no notification was sent.\n\nYou can adjust the duplicate logic in the \"Duplicate Check Logic\" Code node if needed.",
+        "height": 280,
+        "width": 320
+      },
+      "id": "sticky-dupe",
+      "name": "Note: Duplicate Path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1440, 420]
+    },
+    {
+      "parameters": {
+        "content": "## Setup Notes\n\n1. Replace YOUR_GOOGLE_SHEET_ID with your real Sheet ID\n2. Create columns in the Sheet exactly as mapped\n3. Connect OpenAI, Google Sheets and Gmail credentials\n4. Update OWNER_EMAIL in the Gmail node\n5. Activate the workflow after testing",
+        "height": 220,
+        "width": 300
+      },
+      "id": "sticky-setup",
+      "name": "Setup Reminder",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 80]
+    }
+  ],
+  "connections": {
+    "Website Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Clean & Structure Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean & Structure Data": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Emails": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Check Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Check Logic": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Note: Duplicate Path",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI - Classify & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Classify & Extract": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Save Lead to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Lead to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Gmail Notification to Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "meta": {
+    "instanceId": "n8n-ai-lead-processing-v1"
+  },
+  "id": "workflow-ai-lead-processing",
+  "tags": []
+}

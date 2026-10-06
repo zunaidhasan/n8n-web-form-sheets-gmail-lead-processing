@@ -1,1 +1,147 @@
-PLACEHOLDER
+============================================================
+n8n AI Lead Processing Workflow - Setup & Instruction Notes
+============================================================
+Project: Website Form → AI Classification → Google Sheets + Gmail
+Price Scope: $120 | Delivery: 5 days | 1 Revision
+============================================================
+
+WHAT THIS WORKFLOW DOES
+-----------------------
+1. Receives new leads from your website contact form via Webhook
+2. Cleans and structures the incoming data
+3. Checks for possible duplicate emails in your Google Sheet
+4. Uses OpenAI to:
+   - Classify the inquiry
+   - Extract: Name, Email, Service Requested, Approximate Budget, Lead Priority
+   - Generate a short AI summary of the inquiry
+5. Saves the processed lead into Google Sheets (with Priority and Service as separate columns)
+6. Sends a Gmail notification to the agency owner
+7. Puts the Lead Priority in the email subject (e.g. "New HOT Lead – Website Inquiry")
+
+
+FILES INCLUDED
+--------------
+- n8n_AI_Lead_Processing_Workflow.json  → Import this into your n8n instance
+- This setup notes file
+
+
+STEP-BY-STEP SETUP
+------------------
+
+1. IMPORT THE WORKFLOW
+   - Open your n8n instance
+   - Go to Workflows → Import from File
+   - Select: AI_Lead_Processing_Workflow.json
+   - Click Import
+
+2. PREPARE YOUR GOOGLE SHEET
+   Create a new Google Sheet (or use an existing one) with these exact column headers
+   in the first row of a sheet named "Leads":
+
+   | Name | Email | Phone | Service Requested | Approximate Budget | Lead Priority | AI Summary | Original Message | Received At | Status |
+
+   Copy the Sheet ID from the URL:
+   https://docs.google.com/spreadsheets/d/THIS_IS_THE_SHEET_ID/edit
+
+3. CONNECT CREDENTIALS IN N8N
+   You need three credentials:
+
+   a) OpenAI
+      - Create an OpenAI API key at https://platform.openai.com
+      - In n8n: Credentials → Add Credential → OpenAI
+      - Paste your API key
+
+   b) Google Sheets
+      - In n8n: Credentials → Add Credential → Google Sheets OAuth2
+      - Follow the Google OAuth flow and authorize access
+
+   c) Gmail
+      - In n8n: Credentials → Add Credential → Gmail OAuth2
+      - Authorize the same Google account (or the account that should send the alerts)
+
+4. UPDATE THE NODES (IMPORTANT)
+   Open the imported workflow and update these placeholders:
+
+   • "Check Existing Emails" node
+     → Replace YOUR_GOOGLE_SHEET_ID with your real Sheet ID
+
+   • "Save Lead to Google Sheets" node
+     → Replace YOUR_GOOGLE_SHEET_ID with your real Sheet ID
+     → Make sure the column mapping matches your sheet headers
+
+   • "Gmail Notification to Owner" node
+     → Change OWNER_EMAIL_HERE@youragency.com to the real email address
+       that should receive the lead alerts
+
+5. WEBHOOK URL
+   - Open the "Website Form Webhook" node
+   - Click "Listen for Test Event" or activate the workflow
+   - Copy the Production Webhook URL
+   - Example format: https://your-n8n-domain.com/webhook/website-lead
+
+6. CONNECT YOUR WEBSITE FORM
+   Point your contact form to send a POST request to the webhook URL.
+   The form should send these fields (JSON or form-data):
+   - name
+   - email
+   - phone (optional)
+   - message
+   - budget (optional)
+
+   Most form plugins (Contact Form 7, WPForms, Typeform, Tally, etc.) 
+   allow you to add a webhook / custom endpoint.
+
+7. TEST THE WORKFLOW
+   - Activate the workflow
+   - Submit a test form entry
+   - Check:
+     ✓ New row appears in Google Sheets
+     ✓ Priority and Service are in their own columns
+     ✓ Gmail arrives with priority in the subject line
+     ✓ Duplicate submissions are skipped (test by submitting the same email twice)
+
+
+PRIORITY LOGIC (HOW AI DECIDES)
+-------------------------------
+HOT  → Urgent language, higher budget mentioned, ready to start, clear project
+WARM → Clear interest, some budget or timeline mentioned
+COLD → Vague, no budget, just browsing, low intent
+
+You can adjust the rules by editing the System Prompt inside the 
+"OpenAI - Classify & Extract" node.
+
+
+DUPLICATE CHECK
+---------------
+The workflow reads existing emails from the Sheet and skips the 
+OpenAI + save + email steps if the same email is found.
+This is a basic check. You can make it stricter or looser in the 
+"Duplicate Check Logic" Code node.
+
+
+ERROR HANDLING
+--------------
+- If OpenAI fails to return valid JSON, the workflow falls back to 
+  safe default values so the process does not break.
+- Sticky notes inside the workflow remind you of the main setup points.
+
+
+AFTER GOING LIVE
+----------------
+- Monitor the first 5–10 real leads
+- Adjust the OpenAI system prompt if the classification is not accurate enough
+- You can add more columns or change the Gmail template later without 
+  rebuilding the whole workflow
+
+
+SUPPORT WITHIN SCOPE
+--------------------
+This delivery includes 1 revision.
+If something within the agreed scope needs adjustment after you test it, 
+just reply on the order.
+
+
+============================================================
+Workflow ready for import.
+Replace the placeholders → Activate → Test → Go live.
+============================================================
